@@ -97,7 +97,7 @@ def process_customer_data(retail_df, response_df):
 
 # --- Dash App Setup ---
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-app.enable_dev_tools(debug=True)
+#app.enable_dev_tools(debug=True)
 server = app.server
 app.layout = dbc.Container([
     html.H1("Customer Response Campaign Dashboard", className="my-4 text-center"),
@@ -332,4 +332,4 @@ def update_dashboard_display(threshold, masterdata_json):
 
 if __name__ == '__main__':
     #app.run(debug=True, port=8050)
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)), debug=False)
+    app.run(host='0.0.0.0',debug=True)
