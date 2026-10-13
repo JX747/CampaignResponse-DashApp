@@ -97,6 +97,7 @@ def process_customer_data(retail_df, response_df):
 
 # --- Dash App Setup ---
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+app.enable_dev_tools(debug=True)
 server = app.server
 app.layout = dbc.Container([
     html.H1("Customer Response Campaign Dashboard", className="my-4 text-center"),
