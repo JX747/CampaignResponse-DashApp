@@ -156,12 +156,12 @@ app.layout = dbc.Container([
                     html.P("Adjust threshold to filter predictions:"),
                     dcc.Slider(
                         id='prediction-threshold-slider',
-                   #     min=0,
-                   #     max=1,
-                   #     step=0.05,
+                        min=0,
+                        max=1,
+                        step=0.05,
                         value=0.5,
-                   #     marks={i/10: str(i/10) for i in range(0, 11)},
-                   #     tooltip={"placement": "bottom", "always_visible": True}
+                        marks={i/10: str(i/10) for i in range(0, 11)},
+                        tooltip={"placement": "bottom", "always_visible": True}
                     ),
                    html.Div(id='prediction-table-output')
                 ])
