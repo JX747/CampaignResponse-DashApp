@@ -10,13 +10,15 @@ Original file is located at
 #!pip install dash plotly dash_bootstrap_components
 import pickle
 from pathlib import Path
+import traceback
+import logging
+import hashlib
 
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "Train_model.pkl"
 
 xgb = None
 feature_columns = None
-
 if MODEL_PATH.exists():
     try:
         with MODEL_PATH.open("rb") as f:
@@ -25,7 +27,6 @@ if MODEL_PATH.exists():
         print(f"Warning: failed to load model from {MODEL_PATH}: {e}")
 else:
     print(f"Warning: Model file not found: {MODEL_PATH}")
-
 
 import base64
 import io
@@ -40,33 +41,60 @@ import dash_bootstrap_components as dbc
 import plotly.express as px
 import plotly.graph_objects as go
 
+# server-side simple cache to speed up slider updates and reduce JSON parsing overhead
+from flask_caching import Cache
+
 
 def parse_contents(contents, filename):
-    content_type, content_string = contents.split(",")
-    decoded = base64.b64decode(content_string)
+    # contents: data URL string
     try:
-        if "csv" in filename:
+        content_type, content_string = contents.split(",", 1)
+    except Exception:
+        return html.Div(["Invalid file contents."])
+
+    try:
+        decoded = base64.b64decode(content_string)
+    except Exception:
+        return html.Div(["Unable to decode uploaded file."])
+
+    try:
+        fname = (filename or "").lower()
+        if fname.endswith(".csv") or "csv" in fname:
             df = pd.read_csv(io.StringIO(decoded.decode("utf-8")))
-        elif "xls" in filename:
+        elif fname.endswith(('.xls', '.xlsx')) or "xls" in fname:
             df = pd.read_excel(io.BytesIO(decoded))
         else:
             return html.Div(["Only CSV or Excel files are supported."])
-    except Exception:
-        return html.Div(["There was an error processing this file."])
+    except Exception as e:
+        return html.Div([f"There was an error processing this file: {e}"])
     return df
 
 
 def process_customer_data(retail_df, response_df):
-    retail_df["InvoiceDate"] = pd.to_datetime(retail_df["InvoiceDate"], dayfirst=True)
+    # Basic validation/cleaning
+    retail_df = retail_df.copy()
+    response_df = response_df.copy()
+
+    if "InvoiceDate" not in retail_df.columns:
+        raise KeyError("InvoiceDate column missing in retail data")
+
+    retail_df["InvoiceDate"] = pd.to_datetime(retail_df["InvoiceDate"], dayfirst=True, errors="coerce")
     retail_df = retail_df.drop_duplicates()
     retail_df = retail_df.replace(r"^\s*$", pd.NA, regex=True)
     retail_df = retail_df.dropna()
 
-    if not pd.api.types.is_numeric_dtype(retail_df["Quantity"]) or not pd.api.types.is_numeric_dtype(retail_df["UnitPrice"]):
-        raise ValueError("Both 'Quantity' and 'UnitPrice' must be numeric.")
+    if "Quantity" not in retail_df.columns or "UnitPrice" not in retail_df.columns:
+        raise KeyError("Quantity and/or UnitPrice columns missing in retail data")
+
+    # coerce numeric if needed
+    retail_df["Quantity"] = pd.to_numeric(retail_df["Quantity"], errors="coerce").fillna(0)
+    retail_df["UnitPrice"] = pd.to_numeric(retail_df["UnitPrice"], errors="coerce").fillna(0)
 
     retail_df = retail_df[retail_df["Quantity"] >= 0]
     retail_df["Total"] = retail_df["Quantity"] * retail_df["UnitPrice"]
+
+    if "CustomerID" not in retail_df.columns:
+        raise KeyError("CustomerID column missing in retail data")
 
     total_sales_per_customer = retail_df.groupby("CustomerID")["Total"].sum().reset_index(name="Total_Sales")
     unique_products_per_customer = retail_df.groupby("CustomerID")["StockCode"].nunique().reset_index(name="UniqueProductPurchased")
@@ -85,22 +113,75 @@ def process_customer_data(retail_df, response_df):
     response_df = response_df.drop_duplicates()
     response_df = response_df.replace(r"^\s*$", pd.NA, regex=True)
     response_df = response_df.dropna()
-    response_df["nps"] = response_df["nps"].astype("int64")
+
+    if "nps" in response_df.columns:
+        try:
+            response_df["nps"] = response_df["nps"].astype("int64")
+        except Exception:
+            response_df["nps"] = pd.to_numeric(response_df["nps"], errors="coerce").fillna(0).astype("int64")
 
     masterdata = pd.merge(response_df, rfm, how="left", on="CustomerID")
     masterdata = masterdata.dropna()
 
-    masterdata["nps"] = masterdata["nps"].astype("int64")
-    masterdata["Num_Invoices"] = masterdata["Num_Invoices"].astype("int64")
-    masterdata["RecencyDays"] = masterdata["RecencyDays"].astype("int64")
-    masterdata["UniqueProductPurchased"] = masterdata["UniqueProductPurchased"].astype("int64")
-    masterdata["loyalty"] = masterdata["loyalty"].astype("int64")
+    for col in ["nps", "Num_Invoices", "RecencyDays", "UniqueProductPurchased", "loyalty"]:
+        if col in masterdata.columns:
+            try:
+                masterdata[col] = masterdata[col].astype("int64")
+            except Exception:
+                masterdata[col] = pd.to_numeric(masterdata[col], errors="coerce").fillna(0).astype("int64")
 
     return masterdata
 
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 server = app.server
+
+# Lightweight in-memory cache to avoid repeated JSON->DataFrame parsing on slider moves
+cache = Cache(server, config={"CACHE_TYPE": "SimpleCache", "CACHE_DEFAULT_TIMEOUT": 300})
+
+# Minimal index_string additions to help preload heavy assets and inline critical CSS
+app.index_string = """<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <!-- Preload plotly and async graph to reduce render-blocking discovery -->
+        <link rel="preload" href="/_dash-component-suites/plotly/plotly.min.js" as="script">
+        <link rel="preload" href="/_dash-component-suites/dash/dcc/async-graph.js" as="script">
+        <!-- Inline tiny critical CSS so layout can paint before full bootstrap.css loads -->
+        <style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:0;padding:0} .container{padding:8px}</style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>"""
+
+# Basic logging endpoint and 500 handler for easier debugging in production
+logging.basicConfig(level=logging.INFO)
+
+from flask import request
+
+@app.server.route("/healthz")
+def healthz():
+    return "ok", 200
+
+@app.server.before_request
+def log_request_info():
+    server_logger = app.server.logger
+    server_logger.debug(f"Request: {request.method} {request.path} args={request.args}")
+
+@app.server.errorhandler(500)
+def handle_500(e):
+    tb = traceback.format_exc()
+    app.server.logger.error("Internal Server Error: %s\n%s", e, tb)
+    return "Internal server error (see server logs).", 500
 
 app.layout = dbc.Container(
     [
@@ -187,18 +268,6 @@ app.layout = dbc.Container(
                                 dbc.Card(
                                     dbc.CardBody(
                                         [
-                             #              missing_features = [c for c in feature_columns if c not in masterdata.columns]
-                             
-                                            #if missing_features:
-                                         #    return (
-                                         #    None,
-                                         #    go.Figure(),
-                                         #    html.Div(
-                                         #        f"The following feature columns are missing from the processed data: {missing_features}",
-                                         #              style={"color": "red"},
-                                         #              ),
-                                         #               {"display": "none"},
-                                         #               )
                                             html.H4("Model Feature Importance", className="card-title"),
                                             dcc.Graph(id="feature-importance-chart", figure=go.Figure(), config={"displayModeBar": False}),
                                             html.Div(id="feature-importance-table-container"),
@@ -278,7 +347,7 @@ def update_data_store(retail_contents, retail_filename, response_contents, respo
     return retail_data, response_data, html.Div(status_messages)
 
 
-import traceback
+import pickle as _pickle
 
 @app.callback(
     [
@@ -322,16 +391,19 @@ def process_and_store_data(n_clicks, retail_json, response_json):
             print(msg); traceback.print_exc()
             return None, go.Figure(), html.Div(msg, style={"color": "red"}), {"display": "none"}
 
-        # 3) Ensure model is available (lazy load if necessary)
+        # 3) Ensure model is available (lazy load if needed)
         global xgb, feature_columns
         if xgb is None or feature_columns is None:
-            try:
-                with MODEL_PATH.open("rb") as f:
-                    xgb, feature_columns = pickle.load(f)
-            except Exception as e:
-                msg = f"Model load failed: {e}"
-                print(msg); traceback.print_exc()
-                return None, go.Figure(), html.Div(msg, style={"color": "red"}), {"display": "none"}
+            if MODEL_PATH.exists():
+                try:
+                    with MODEL_PATH.open("rb") as f:
+                        (xgb, feature_columns) = pickle.load(f)
+                except Exception as e:
+                    print(f"Error loading model at processing time: {e}")
+                    traceback.print_exc()
+
+        if xgb is None or feature_columns is None:
+            return None, go.Figure(), html.Div(f"Model file not found or failed to load: {MODEL_PATH}", style={"color": "red"}), {"display": "none"}
 
         # 4) Validate feature columns
         missing = [c for c in feature_columns if c not in masterdata.columns]
@@ -353,13 +425,24 @@ def process_and_store_data(n_clicks, retail_json, response_json):
         feature_importance_chart.update_layout(yaxis={"categoryorder": "total ascending"})
         feature_importance_table = dbc.Table.from_dataframe(feature_importance_df, striped=True, bordered=True, hover=True)
 
-        return masterdata.to_json(date_format="iso", orient="split"), feature_importance_chart, feature_importance_table, {"display": "block"}
+        # cache the dataframe to speed slider updates — key derived from JSON payload
+        masterdata_json = masterdata.to_json(date_format="iso", orient="split")
+        cache_key = hashlib.sha256(masterdata_json.encode("utf-8")).hexdigest()
+        try:
+            cache.set(cache_key, _pickle.dumps(masterdata))
+            print(f"Cached masterdata with key: {cache_key}")
+        except Exception:
+            # caching errors shouldn't break the app
+            print("Warning: failed to set cache for masterdata")
+
+        return masterdata_json, feature_importance_chart, feature_importance_table, {"display": "block"}
 
     except Exception as e:
         # Final catch-all — always return the right shapes
         print("Unexpected error in process_and_store_data:", e)
         traceback.print_exc()
         return None, go.Figure(), html.Div(f"Unexpected error: {e}", style={"color": "red"}), {"display": "none"}
+
 
 @app.callback(
     [
@@ -389,7 +472,33 @@ def update_dashboard_display(threshold, masterdata_json):
             html.Div("Upload data and click 'Process Data' to see predictions."),
         )
 
-    masterdata = pd.read_json(io.StringIO(masterdata_json), orient="split")
+    # try cache first to avoid JSON parsing on every slider move
+    cache_key = hashlib.sha256(masterdata_json.encode("utf-8")).hexdigest()
+    cached = None
+    try:
+        cached = cache.get(cache_key)
+    except Exception:
+        cached = None
+
+    if cached:
+        try:
+            masterdata = _pickle.loads(cached)
+        except Exception:
+            masterdata = pd.read_json(masterdata_json, orient="split")
+    else:
+        masterdata = pd.read_json(masterdata_json, orient="split")
+
+    if "prediction_proba" not in masterdata.columns:
+        return (
+            html.P("Total Customers: N/A"),
+            html.P("Predicted Respondents: N/A"),
+            html.P("Predicted Non-Respondents: N/A"),
+            html.P("Predicted Response Rate: N/A"),
+            html.P("AUC Score: N/A (prediction_proba missing)"),
+            go.Figure(),
+            html.Div("prediction_proba column is missing in the processed data."),
+        )
+
     masterdata["predicted_response"] = (masterdata["prediction_proba"] >= threshold).astype(int)
 
     response_counts = masterdata["predicted_response"].value_counts().reindex([0, 1], fill_value=0)
