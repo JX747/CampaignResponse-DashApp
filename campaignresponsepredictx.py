@@ -133,13 +133,21 @@ def process_customer_data(retail_df, response_df):
     return masterdata
 
 
-app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+# Load Plotly from a trusted CDN to avoid relying on the server to serve the large plotly bundle.
+# This mitigates the 500 error observed when the internal _dash-component-suites endpoint fails.
+app = Dash(
+    __name__,
+    external_stylesheets=[dbc.themes.BOOTSTRAP],
+    external_scripts=["https://cdn.plot.ly/plotly-latest.min.js"],
+    suppress_callback_exceptions=True,
+)
 server = app.server
 
 # Lightweight in-memory cache to avoid repeated JSON->DataFrame parsing on slider moves
 cache = Cache(server, config={"CACHE_TYPE": "SimpleCache", "CACHE_DEFAULT_TIMEOUT": 300})
 
 # Minimal index_string additions to help preload heavy assets and inline critical CSS
+# Note: preload now points at the CDN location rather than the internal dash component path
 app.index_string = """<!DOCTYPE html>
 <html>
     <head>
@@ -147,9 +155,8 @@ app.index_string = """<!DOCTYPE html>
         <title>{%title%}</title>
         {%favicon%}
         {%css%}
-        <!-- Preload plotly and async graph to reduce render-blocking discovery -->
-        <link rel="preload" href="/_dash-component-suites/plotly/plotly.min.js" as="script">
-        <link rel="preload" href="/_dash-component-suites/dash/dcc/async-graph.js" as="script">
+        <!-- Preload plotly from CDN to reduce render-blocking discovery when the server cannot serve it -->
+        <link rel="preload" href="https://cdn.plot.ly/plotly-latest.min.js" as="script">
         <!-- Inline tiny critical CSS so layout can paint before full bootstrap.css loads -->
         <style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:0;padding:0} .container{padding:8px}</style>
     </head>
@@ -304,6 +311,7 @@ app.layout = dbc.Container(
         ),
         dcc.Store(id="retail-data-store"),
         dcc.Store(id="response-data-store"),
+        # store now holds a cache key (string) instead of the full JSON payload to reduce transfer size
         dcc.Store(id="masterdata-with-predictions"),
     ],
     fluid=True,
@@ -362,7 +370,7 @@ import pickle as _pickle
     prevent_initial_call=True,
 )
 def process_and_store_data(n_clicks, retail_json, response_json):
-    # Keep return types consistent: (str_or_None, Figure, children_or_None, style_dict)
+    # Keep return types consistent: (cache_key_or_None, Figure, children_or_None, style_dict)
     default_hidden = (None, go.Figure(), None, {"display": "none"})
     if n_clicks is None or not retail_json or not response_json:
         return default_hidden
@@ -435,7 +443,8 @@ def process_and_store_data(n_clicks, retail_json, response_json):
             # caching errors shouldn't break the app
             print("Warning: failed to set cache for masterdata")
 
-        return masterdata_json, feature_importance_chart, feature_importance_table, {"display": "block"}
+        # IMPORTANT: return only the cache key to the browser to avoid transferring the large JSON payload
+        return cache_key, feature_importance_chart, feature_importance_table, {"display": "block"}
 
     except Exception as e:
         # Final catch-all — always return the right shapes
@@ -460,8 +469,8 @@ def process_and_store_data(n_clicks, retail_json, response_json):
     ],
     prevent_initial_call=True,
 )
-def update_dashboard_display(threshold, masterdata_json):
-    if masterdata_json is None:
+def update_dashboard_display(threshold, masterdata_key_or_json):
+    if masterdata_key_or_json is None:
         return (
             html.P("Total Customers: N/A"),
             html.P("Predicted Respondents: N/A"),
@@ -472,21 +481,42 @@ def update_dashboard_display(threshold, masterdata_json):
             html.Div("Upload data and click 'Process Data' to see predictions."),
         )
 
-    # try cache first to avoid JSON parsing on every slider move
-    cache_key = hashlib.sha256(masterdata_json.encode("utf-8")).hexdigest()
-    cached = None
+    masterdata = None
+    # First treat the incoming value as a cache key (preferred, small)
     try:
-        cached = cache.get(cache_key)
-    except Exception:
         cached = None
-
-    if cached:
         try:
-            masterdata = _pickle.loads(cached)
+            cached = cache.get(masterdata_key_or_json)
         except Exception:
-            masterdata = pd.read_json(masterdata_json, orient="split")
-    else:
-        masterdata = pd.read_json(masterdata_json, orient="split")
+            cached = None
+
+        if cached:
+            try:
+                masterdata = _pickle.loads(cached)
+            except Exception:
+                masterdata = None
+
+        # if cache miss, attempt to parse the value directly as JSON (backwards compatibility)
+        if masterdata is None:
+            try:
+                masterdata = pd.read_json(masterdata_key_or_json, orient="split")
+            except Exception:
+                masterdata = None
+
+    except Exception as e:
+        print(f"Error retrieving masterdata from cache or JSON: {e}")
+        masterdata = None
+
+    if masterdata is None:
+        return (
+            html.P("Total Customers: N/A"),
+            html.P("Predicted Respondents: N/A"),
+            html.P("Predicted Non-Respondents: N/A"),
+            html.P("Predicted Response Rate: N/A"),
+            html.P("AUC Score: N/A (no data)"),
+            go.Figure(),
+            html.Div("No processed data available. Click 'Process Data' first."),
+        )
 
     if "prediction_proba" not in masterdata.columns:
         return (
