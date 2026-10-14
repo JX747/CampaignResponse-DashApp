@@ -398,7 +398,7 @@ def process_and_store_data(n_clicks, retail_json, response_json):
             msg = f"Error during data processing: {e}"
             print(msg); traceback.print_exc()
             return None, go.Figure(), html.Div(msg, style={"color": "red"}), {"display": "none"}
-
+        status_messages.append(html.P(f"masterdata created successfully."))    
         # 3) Ensure model is available (lazy load if needed)
         global xgb, feature_columns
         if xgb is None or feature_columns is None:
