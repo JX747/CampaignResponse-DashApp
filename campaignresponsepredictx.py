@@ -278,6 +278,8 @@ def update_data_store(retail_contents, retail_filename, response_contents, respo
     return retail_data, response_data, html.Div(status_messages)
 
 
+import traceback
+
 @app.callback(
     [
         Output("masterdata-with-predictions", "data"),
@@ -291,52 +293,73 @@ def update_data_store(retail_contents, retail_filename, response_contents, respo
     prevent_initial_call=True,
 )
 def process_and_store_data(n_clicks, retail_json, response_json):
+    # Keep return types consistent: (str_or_None, Figure, children_or_None, style_dict)
+    default_hidden = (None, go.Figure(), None, {"display": "none"})
     if n_clicks is None or not retail_json or not response_json:
-        return None, go.Figure(), None, {"display": "none"}
+        return default_hidden
 
     try:
-        retail_df = pd.read_json(io.StringIO(retail_json), orient="split")
-        response_df = pd.read_json(io.StringIO(response_json), orient="split")
+        # 1) Parse uploaded stores safely
+        try:
+            retail_df = pd.read_json(retail_json, orient="split")
+        except Exception as e:
+            msg = f"Error parsing retail data: {e}"
+            print(msg); traceback.print_exc()
+            return None, go.Figure(), html.Div(msg, style={"color": "red"}), {"display": "none"}
 
-        masterdata = process_customer_data(retail_df, response_df)
+        try:
+            response_df = pd.read_json(response_json, orient="split")
+        except Exception as e:
+            msg = f"Error parsing response data: {e}"
+            print(msg); traceback.print_exc()
+            return None, go.Figure(), html.Div(msg, style={"color": "red"}), {"display": "none"}
 
+        # 2) Process data
+        try:
+            masterdata = process_customer_data(retail_df, response_df)
+        except Exception as e:
+            msg = f"Error during data processing: {e}"
+            print(msg); traceback.print_exc()
+            return None, go.Figure(), html.Div(msg, style={"color": "red"}), {"display": "none"}
+
+        # 3) Ensure model is available (lazy load if necessary)
+        global xgb, feature_columns
+        if xgb is None or feature_columns is None:
+            try:
+                with MODEL_PATH.open("rb") as f:
+                    xgb, feature_columns = pickle.load(f)
+            except Exception as e:
+                msg = f"Model load failed: {e}"
+                print(msg); traceback.print_exc()
+                return None, go.Figure(), html.Div(msg, style={"color": "red"}), {"display": "none"}
+
+        # 4) Validate feature columns
+        missing = [c for c in feature_columns if c not in masterdata.columns]
+        if missing:
+            msg = f"Missing feature columns in processed data: {missing}"
+            print(msg)
+            return None, go.Figure(), html.Div(msg, style={"color": "red"}), {"display": "none"}
+
+        # 5) Predict
         X_test = masterdata[feature_columns]
         masterdata["prediction_proba"] = xgb.predict_proba(X_test)[:, 1]
 
+        # 6) Build UI objects (figure + table)
         feature_importance_df = pd.DataFrame({
             "Feature": feature_columns,
             "Importance": xgb.feature_importances_
-        }).sort_values(by="Importance", ascending=False)
-
-        feature_importance_chart = px.bar(
-            feature_importance_df,
-            x="Importance",
-            y="Feature",
-            orientation="h",
-            title="Feature Importance for Response Prediction",
-            labels={"Importance": "Importance Score", "Feature": "Feature Name"},
-        )
+        }).sort_values("Importance", ascending=False)
+        feature_importance_chart = px.bar(feature_importance_df, x="Importance", y="Feature", orientation="h")
         feature_importance_chart.update_layout(yaxis={"categoryorder": "total ascending"})
+        feature_importance_table = dbc.Table.from_dataframe(feature_importance_df, striped=True, bordered=True, hover=True)
 
-        feature_importance_table = dbc.Table.from_dataframe(
-            feature_importance_df,
-            striped=True,
-            bordered=True,
-            hover=True,
-            className="mt-3",
-        )
-
-        return (
-            masterdata.to_json(date_format="iso", orient="split"),
-            feature_importance_chart,
-            feature_importance_table,
-            {"display": "block"},
-        )
+        return masterdata.to_json(date_format="iso", orient="split"), feature_importance_chart, feature_importance_table, {"display": "block"}
 
     except Exception as e:
-        print(f"Error during data processing: {e}")
-        return None, go.Figure(), html.Div(f"Error during data processing or model training: {e}", style={"color": "red"}), {"display": "none"}
-
+        # Final catch-all — always return the right shapes
+        print("Unexpected error in process_and_store_data:", e)
+        traceback.print_exc()
+        return None, go.Figure(), html.Div(f"Unexpected error: {e}", style={"color": "red"}), {"display": "none"}
 
 @app.callback(
     [
