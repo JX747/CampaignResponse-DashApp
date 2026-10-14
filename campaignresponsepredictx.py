@@ -187,17 +187,18 @@ app.layout = dbc.Container(
                                 dbc.Card(
                                     dbc.CardBody(
                                         [
-                                           missing_features == [c for c in feature_columns if c not in masterdata.columns]
-                                          if missing_features:
-                                             return (
-                                             None,
-                                             go.Figure(),
-                                             html.Div(
-                                                 f"The following feature columns are missing from the processed data: {missing_features}",
-                                                       style={"color": "red"},
-                                                       ),
-                                                        {"display": "none"},
-                                                        )
+                             #              missing_features = [c for c in feature_columns if c not in masterdata.columns]
+                             
+                                            #if missing_features:
+                                         #    return (
+                                         #    None,
+                                         #    go.Figure(),
+                                         #    html.Div(
+                                         #        f"The following feature columns are missing from the processed data: {missing_features}",
+                                         #              style={"color": "red"},
+                                         #              ),
+                                         #               {"display": "none"},
+                                         #               )
                                             html.H4("Model Feature Importance", className="card-title"),
                                             dcc.Graph(id="feature-importance-chart", figure=go.Figure(), config={"displayModeBar": False}),
                                             html.Div(id="feature-importance-table-container"),
