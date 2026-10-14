@@ -7,4 +7,4 @@ scikit-learn
 xgboost
 gunicorn
 openpyxl
-flask
+flask_caching
