@@ -187,7 +187,7 @@ app.layout = dbc.Container(
                                 dbc.Card(
                                     dbc.CardBody(
                                         [
-                                           missing_features = [c for c in feature_columns if c not in masterdata.columns]
+                                           missing_features == [c for c in feature_columns if c not in masterdata.columns]
                                           if missing_features:
                                              return (
                                              None,
