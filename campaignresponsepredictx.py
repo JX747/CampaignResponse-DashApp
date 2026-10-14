@@ -13,12 +13,30 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "Train_model.pkl"
-if not MODEL_PATH.exists():
-    raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
 
-with MODEL_PATH.open("rb") as f:
-    (xgb, feature_columns) = pickle.load(f)
+xgb = None
+feature_columns = None
 
+if MODEL_PATH.exists():
+    try:
+        with MODEL_PATH.open("rb") as f:
+            (xgb, feature_columns) = pickle.load(f)
+    except Exception as e:
+        print(f"Warning: failed to load model from {MODEL_PATH}: {e}")
+else:
+    print(f"Warning: Model file not found: {MODEL_PATH}")
+
+missing_features = [c for c in feature_columns if c not in masterdata.columns]
+if missing_features:
+    return (
+        None,
+        go.Figure(),
+        html.Div(
+            f"The following feature columns are missing from the processed data: {missing_features}",
+            style={"color": "red"},
+        ),
+        {"display": "none"},
+    )
 import base64
 import io
 import warnings
