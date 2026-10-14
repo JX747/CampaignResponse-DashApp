@@ -157,9 +157,10 @@ app.layout = dbc.Container([
                     dcc.Slider(
                         id='prediction-threshold-slider',
                         min=0,
-                        max=1,
+                        max=100,
                         step=0.05,
-                        value=0.5,
+                        value=50,
+                        updatemode= 'mouseup',
                         marks={i/10: str(i/10) for i in range(0, 11)},
                         tooltip={"placement": "bottom", "always_visible": True}
                     ),
