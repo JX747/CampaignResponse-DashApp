@@ -178,7 +178,7 @@ app.layout = dbc.Container([
                     ),
                      html.Div(id='prediction-table-output')
                 ])
-            ], className="shadow")
+        #    ], className="shadow")
         ], md=6)
 
     
