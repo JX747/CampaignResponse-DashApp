@@ -150,23 +150,38 @@ app.layout = dbc.Container([
                     html.Div(id="feature-importance-table-container")
                 ])
             ), md=6),
-             dbc.Col(dbc.Card(
+             dbc.Col(dbc.Card([
+          #      dbc.CardBody([
+          #          html.H4("Customer Predictions", className="card-title"),
+          #          html.P("Adjust threshold to filter predictions:"),
+          #          dcc.Slider(
+          #              id='prediction-threshold-slider',
+          #              min=0,
+          #              max=100,
+          #              step=0.05,
+          #              value=50,
+          #              updatemode= 'mouseup',
+          #              marks={i/10: str(i/10) for i in range(0, 11)},
+          #              tooltip={"placement": "bottom", "always_visible": True}
+          #          ),
+          #          html.Div(id='prediction-table-output')
+          #      ])
+          #  ), md=6)
+          #        dbc.Card([
+                dbc.CardHeader("Select Probability Threshold"),
                 dbc.CardBody([
-                    html.H4("Customer Predictions", className="card-title"),
-                    html.P("Adjust threshold to filter predictions:"),
-                    dcc.Slider(
-                        id='prediction-threshold-slider',
-                        min=0,
-                        max=100,
-                        step=0.05,
-                        value=50,
-                        updatemode= 'mouseup',
-                        marks={i/10: str(i/10) for i in range(0, 11)},
-                        tooltip={"placement": "bottom", "always_visible": True}
+                    dcc.Dropdown(
+                        id='threshold-dropdown',
+                        options=[{'label': f'{i/10:.1f}', 'value': i/10} for i in range(1, 10)],
+                        value=0.5,
+                        clearable=False
                     ),
-                    html.Div(id='prediction-table-output')
+                     html.Div(id='prediction-table-output')
                 ])
-            ), md=6)
+            ], className="shadow")
+        ], md=6)
+
+    
         ])
     ])),
     dcc.Store(id='retail-data-store'),
@@ -332,5 +347,9 @@ def update_dashboard_display(threshold, masterdata_json):
     )
 
 if __name__ == '__main__':
-    #app.run(debug=True, port=8050)
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8050)), debug=False)
+    import webbrowser
+    from threading import Timer
+
+    url = "http://0.0.0.0"
+    Timer(1, lambda: webbrowser.open(url)).start()
+    app.run(debug=True)
