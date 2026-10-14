@@ -276,8 +276,8 @@ app.layout = dbc.Container(
                                     dbc.CardBody(
                                         [
                                             html.H4("Model Feature Importance", className="card-title"),
-                                            dcc.Graph(id="feature-importance-chart", figure=go.Figure(), config={"displayModeBar": False}),
-                                            html.Div(id="feature-importance-table-container"),
+                                   #         dcc.Graph(id="feature-importance-chart", figure=go.Figure(), config={"displayModeBar": False}),
+                                   #         html.Div(id="feature-importance-table-container"),
                                         ]
                                     )
                                 ),
@@ -289,15 +289,15 @@ app.layout = dbc.Container(
                                         [
                                             html.H4("Customer Predictions", className="card-title"),
                                             html.P("Adjust threshold to filter predictions:"),
-                                            dcc.Slider(
-                                                id="prediction-threshold-slider",
-                                                min=0,
-                                                max=1,
-                                                step=0.01,
-                                                value=0.5,
-                                                marks={i / 10: str(i / 10) for i in range(0, 11)},
-                                                tooltip={"placement": "bottom", "always_visible": True},
-                                            ),
+                                      #      dcc.Slider(
+                                      #          id="prediction-threshold-slider",
+                                      #          min=0,
+                                      #          max=1,
+                                      #          step=0.01,
+                                      #          value=0.5,
+                                      #          marks={i / 10: str(i / 10) for i in range(0, 11)},
+                                      #          tooltip={"placement": "bottom", "always_visible": True},
+                                      #      ),
                                             html.Div(id="prediction-table-output"),
                                         ]
                                     )
