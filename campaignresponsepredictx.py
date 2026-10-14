@@ -164,24 +164,16 @@ app.layout = dbc.Container([
           #              marks={i/10: str(i/10) for i in range(0, 11)},
           #              tooltip={"placement": "bottom", "always_visible": True}
           #          ),
-          #          html.Div(id='prediction-table-output')
-          #      ])
-          #  ), md=6)
-          #        dbc.Card([
-          #      dbc.CardHeader("Select Probability Threshold"),
-          #      dbc.CardBody([
-                    dcc.Dropdown(   
+                     dcc.Dropdown(   
                         id='threshold-dropdown',
                         options=[{'label': f'{i/10:.1f}', 'value': i/10} for i in range(1, 10)],
                         value=0.5,
                         clearable=False
                     ), 
-                     html.Div(id='prediction-table-output')
-                ]) 
-        #    ], className="shadow")
-            ), md=6) 
-
-    
+                    html.Div(id='prediction-table-output')
+                ])
+            ), md=6)
+              
         ])
     ])),
     dcc.Store(id='retail-data-store'),
